@@ -35,13 +35,25 @@ class SessionAdapter extends TypeAdapter<Session> {
       frameTimeHist: fields[14] == null ? null : _intList(fields[14]),
       realFrameData: fields[15] as bool?,
       fpsStartPoll: (fields[16] as num?)?.toInt(),
+      batteryCurrentSamples:
+          fields[17] == null ? null : _doubleList(fields[17]),
+      powerWattsSamples: fields[18] == null ? null : _doubleList(fields[18]),
+      deviceModel: fields[19] as String?,
+      socName: fields[20] as String?,
+      totalRamMb: (fields[21] as num?)?.toDouble(),
+      excludedSamples: (fields[22] as num?)?.toInt(),
+      pausedSeconds: (fields[23] as num?)?.toInt(),
+      stabilitySamples:
+          fields[24] == null ? null : _doubleList(fields[24]),
+      frameCountSamples:
+          fields[25] == null ? null : _intList(fields[25]),
     );
   }
 
   @override
   void write(BinaryWriter writer, Session obj) {
     writer
-      ..writeByte(17)
+      ..writeByte(26)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -75,7 +87,25 @@ class SessionAdapter extends TypeAdapter<Session> {
       ..writeByte(15)
       ..write(obj.realFrameData)
       ..writeByte(16)
-      ..write(obj.fpsStartPoll);
+      ..write(obj.fpsStartPoll)
+      ..writeByte(17)
+      ..write(obj.batteryCurrentSamples)
+      ..writeByte(18)
+      ..write(obj.powerWattsSamples)
+      ..writeByte(19)
+      ..write(obj.deviceModel)
+      ..writeByte(20)
+      ..write(obj.socName)
+      ..writeByte(21)
+      ..write(obj.totalRamMb)
+      ..writeByte(22)
+      ..write(obj.excludedSamples)
+      ..writeByte(23)
+      ..write(obj.pausedSeconds)
+      ..writeByte(24)
+      ..write(obj.stabilitySamples)
+      ..writeByte(25)
+      ..write(obj.frameCountSamples);
   }
 
   static List<double> _doubleList(dynamic v) {

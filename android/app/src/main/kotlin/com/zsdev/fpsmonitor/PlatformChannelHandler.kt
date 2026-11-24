@@ -1,10 +1,15 @@
 package com.zsdev.fpsmonitor
 
+import android.Manifest
+import android.app.NotificationManager
 import android.content.ClipData
+import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.BatteryManager
+import android.os.Build
+import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import io.flutter.plugin.common.BinaryMessenger
@@ -22,7 +27,9 @@ import java.util.concurrent.Executors
  *  - bindShizuku                 -> Boolean (starts async bind + permission request)
  *  - runShell (command)          -> String (stdout+stderr, or "ERR: ...")
  *  - getStats (packageName,      -> {fps, cpuTemp, gpuTemp, freeRamMb, cpuUsage,
- *            includeStorage)        gpuUsage, storageSpeed, refreshRate}
+ *            includeStorage)        gpuUsage, storageSpeed, refreshRate,
+ *                                   batteryCurrentMa, batteryPowerWatts}
+ *  - getDeviceInfo               -> {deviceModel, socName, totalRamMb}
  *  - getFrames (packageName,     -> {frames: List<Double> ms, valid: Boolean} new frame times
  *            reset)                  since the previous call (see FrameSampler)
  *  - shareFile (bytes, fileName, -> Boolean (opens the Android share sheet for a CSV / PNG)
@@ -98,6 +105,20 @@ class PlatformChannelHandler(
                 }
             }
 
+            "getDeviceInfo" -> executor.execute {
+                val info = try {
+                    metrics.deviceInfo(shizuku)
+                } catch (t: Throwable) {
+                    Log.e(TAG, "deviceInfo() failed: ${t.message}")
+                    mapOf(
+                        "deviceModel" to (Build.MODEL ?: "Android Device"),
+                        "socName" to (Build.HARDWARE ?: "Unknown SoC"),
+                        "totalRamMb" to -1.0
+                    )
+                }
+                replyOnUi(result) { info }
+            }
+
             "getFrames" -> {
                 val packageName = call.argument<String>("packageName") ?: ""
                 val reset = call.argument<Boolean>("reset") ?: false
@@ -143,6 +164,20 @@ class PlatformChannelHandler(
 
             "getBatteryLevel" -> replyOnUi(result) { batteryLevelPercent() }
 
+            "checkBatteryOptimization" -> replyOnUi(result) { isIgnoringBatteryOptimizations() }
+
+            "requestIgnoreBatteryOptimization" -> replyOnUi(result) {
+                requestIgnoreBatteryOptimization()
+            }
+
+            "openBatterySettings" -> replyOnUi(result) { openBatterySettings() }
+
+            "checkNotificationPermission" -> replyOnUi(result) { hasNotificationPermission() }
+
+            "requestNotificationPermission" -> replyOnUi(result) {
+                requestNotificationPermission()
+            }
+
             "checkOverlayPermission" -> replyOnUi(result) { overlayPermitted() }
 
             "requestOverlayPermission" -> replyOnUi(result) {
@@ -180,6 +215,28 @@ class PlatformChannelHandler(
                 }
             }
 
+            "updateNotification" -> replyOnUi(result) {
+                val fps = call.argument<Number>("fps")?.toDouble() ?: -1.0
+                val cpuTemp = call.argument<Number>("cpuTemp")?.toDouble() ?: -1.0
+                val freeRam = call.argument<Number>("freeRamMb")?.toDouble() ?: -1.0
+                val elapsedSec = call.argument<Number>("elapsedSeconds")?.toInt() ?: 0
+                val paused = call.argument<Boolean>("paused") ?: false
+                try {
+                    MonitorService.updateNotification(
+                        appContext,
+                        fps,
+                        cpuTemp,
+                        freeRam,
+                        elapsedSec,
+                        paused
+                    )
+                    true
+                } catch (t: Throwable) {
+                    Log.w(TAG, "updateNotification failed: ${t.message}")
+                    false
+                }
+            }
+
             // Kept for compatibility with overlay-only flows
             "startOverlay" -> replyOnUi(result) {
                 try {
@@ -196,13 +253,27 @@ class PlatformChannelHandler(
             }
 
             "updateOverlay" -> replyOnUi(result) {
-                val fps = call.argument<Double>("fps") ?: -1.0
-                val cpuTemp = call.argument<Double>("cpuTemp") ?: -1.0
-                val gpuTemp = call.argument<Double>("gpuTemp") ?: -1.0
-                val freeRam = call.argument<Double>("freeRamMb") ?: -1.0
-                val cpuUsage = call.argument<Double>("cpuUsage") ?: -1.0
-                val gpuUsage = call.argument<Double>("gpuUsage") ?: -1.0
-                OverlayService.update(appContext, fps, cpuTemp, gpuTemp, freeRam, cpuUsage, gpuUsage)
+                val fps = call.argument<Number>("fps")?.toDouble() ?: -1.0
+                val cpuTemp = call.argument<Number>("cpuTemp")?.toDouble() ?: -1.0
+                val gpuTemp = call.argument<Number>("gpuTemp")?.toDouble() ?: -1.0
+                val freeRam = call.argument<Number>("freeRamMb")?.toDouble() ?: -1.0
+                val cpuUsage = call.argument<Number>("cpuUsage")?.toDouble() ?: -1.0
+                val gpuUsage = call.argument<Number>("gpuUsage")?.toDouble() ?: -1.0
+                val batteryCurrentMa = call.argument<Number>("batteryCurrentMa")?.toDouble() ?: -1.0
+                val batteryPowerWatts = call.argument<Number>("batteryPowerWatts")?.toDouble() ?: -1.0
+                val paused = call.argument<Boolean>("paused") ?: false
+                OverlayService.update(
+                    appContext,
+                    fps,
+                    cpuTemp,
+                    gpuTemp,
+                    freeRam,
+                    cpuUsage,
+                    gpuUsage,
+                    batteryCurrentMa,
+                    batteryPowerWatts,
+                    paused
+                )
                 true
             }
 
@@ -280,6 +351,100 @@ class PlatformChannelHandler(
             true
         }
 
+    private fun isIgnoringBatteryOptimizations(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        return try {
+            val pm = appContext.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            pm?.isIgnoringBatteryOptimizations(appContext.packageName) ?: false
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    private fun requestIgnoreBatteryOptimization(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
+        try {
+            val intent = Intent(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Uri.parse("package:${activity.packageName}")
+            )
+            activity.startActivity(intent)
+            return true
+        } catch (t: Throwable) {
+            Log.w(TAG, "ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS failed: ${t.message}")
+        }
+        return openBatterySettings()
+    }
+
+    private fun openBatterySettings(): Boolean {
+        return try {
+            val intent = Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:${activity.packageName}")
+            )
+            activity.startActivity(intent)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "openBatterySettings failed: ${t.message}")
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    activity.startActivity(
+                        Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    )
+                    true
+                } else {
+                    false
+                }
+            } catch (_: Throwable) {
+                false
+            }
+        }
+    }
+
+    private fun hasNotificationPermission(): Boolean {
+        val mgr = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        val enabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            mgr?.areNotificationsEnabled() ?: true
+        } else {
+            true
+        }
+        if (!enabled) return false
+        return if (Build.VERSION.SDK_INT >= 33) {
+            appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+        } else {
+            true
+        }
+    }
+
+    private fun requestNotificationPermission(): Boolean {
+        if (Build.VERSION.SDK_INT >= 33) {
+            val granted = appContext.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) ==
+                PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                activity.requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 4201)
+                return true
+            }
+        }
+        return try {
+            val intent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                    putExtra(Settings.EXTRA_APP_PACKAGE, activity.packageName)
+                }
+            } else {
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${activity.packageName}")
+                )
+            }
+            activity.startActivity(intent)
+            true
+        } catch (t: Throwable) {
+            Log.w(TAG, "requestNotificationPermission failed: ${t.message}")
+            false
+        }
+    }
+
     private fun batteryLevelPercent(): Int {
         return try {
             val bm = appContext.getSystemService(BatteryManager::class.java)
@@ -311,7 +476,9 @@ class PlatformChannelHandler(
         "cpuUsage" to -1.0,
         "gpuUsage" to -1.0,
         "storageSpeed" to -1.0,
-        "refreshRate" to 60.0
+        "refreshRate" to 60.0,
+        "batteryCurrentMa" to -1.0,
+        "batteryPowerWatts" to -1.0
     )
 
     companion object {

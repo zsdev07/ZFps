@@ -75,7 +75,14 @@ jobs:
         run: |
           mv build/app/outputs/flutter-apk/app-release.apk \
              build/app/outputs/flutter-apk/fps-monitor-${{ github.event.inputs.version }}.apk
-             
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: fps-monitor-${{ github.event.inputs.version }}
+          path: build/app/outputs/flutter-apk/fps-monitor-${{ github.event.inputs.version }}.apk
+          if-no-files-found: error
+
       - name: Create Git Tag and GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -83,3 +90,4 @@ jobs:
           name: Release ${{ github.event.inputs.version }}
           files: build/app/outputs/flutter-apk/fps-monitor-${{ github.event.inputs.version }}.apk
           generate_release_notes: true
+

@@ -10,6 +10,7 @@ class OverlayConfig {
   final bool showRam;
   final bool showCpuUsage;
   final bool showGpuUsage;
+  final bool showPower;
 
   /// 0 = fully transparent, 100 = solid dark card.
   final int bgOpacity;
@@ -25,6 +26,7 @@ class OverlayConfig {
     this.showRam = true,
     this.showCpuUsage = false,
     this.showGpuUsage = false,
+    this.showPower = false,
     this.bgOpacity = 90,
     this.textScale = 1.0,
   });
@@ -55,12 +57,18 @@ class OverlayConfig {
   static const OverlayConfig everything = OverlayConfig(
     showCpuUsage: true,
     showGpuUsage: true,
+    showPower: true,
   );
 
   // ------------------------------------------------------------ helpers
 
   bool get hasOtherStats =>
-      showCpuTemp || showGpuTemp || showRam || showCpuUsage || showGpuUsage;
+      showCpuTemp ||
+      showGpuTemp ||
+      showRam ||
+      showCpuUsage ||
+      showGpuUsage ||
+      showPower;
 
   /// At least one line must stay on, otherwise the bar would be empty.
   bool get hasAnyStat => showFps || hasOtherStats;
@@ -76,7 +84,8 @@ class OverlayConfig {
       showGpuTemp == o.showGpuTemp &&
       showRam == o.showRam &&
       showCpuUsage == o.showCpuUsage &&
-      showGpuUsage == o.showGpuUsage;
+      showGpuUsage == o.showGpuUsage &&
+      showPower == o.showPower;
 
   OverlayConfig copyWith({
     bool? showFps,
@@ -86,6 +95,7 @@ class OverlayConfig {
     bool? showRam,
     bool? showCpuUsage,
     bool? showGpuUsage,
+    bool? showPower,
     int? bgOpacity,
     double? textScale,
   }) {
@@ -97,6 +107,7 @@ class OverlayConfig {
       showRam: showRam ?? this.showRam,
       showCpuUsage: showCpuUsage ?? this.showCpuUsage,
       showGpuUsage: showGpuUsage ?? this.showGpuUsage,
+      showPower: showPower ?? this.showPower,
       bgOpacity: bgOpacity ?? this.bgOpacity,
       textScale: textScale ?? this.textScale,
     );
@@ -110,6 +121,7 @@ class OverlayConfig {
         'showRam': showRam,
         'showCpuUsage': showCpuUsage,
         'showGpuUsage': showGpuUsage,
+        'showPower': showPower,
         'bgOpacity': bgOpacity,
         'textScale': textScale,
       };
@@ -127,6 +139,7 @@ class OverlayConfig {
       showRam: b('showRam', d.showRam),
       showCpuUsage: b('showCpuUsage', d.showCpuUsage),
       showGpuUsage: b('showGpuUsage', d.showGpuUsage),
+      showPower: b('showPower', d.showPower),
       bgOpacity: opacity is num ? opacity.toInt().clamp(0, 100).toInt() : d.bgOpacity,
       textScale: scale is num ? scale.toDouble().clamp(0.6, 2.0).toDouble() : d.textScale,
     );

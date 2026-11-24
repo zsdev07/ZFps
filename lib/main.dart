@@ -7,7 +7,9 @@ import 'package:hive/hive.dart';
 import 'database/app_database.dart';
 import 'models/session.dart';
 import 'screens/home_screen.dart';
+import 'services/monitor_service.dart';
 import 'services/notification_service.dart';
+import 'services/shizuku_service.dart';
 
 const MethodChannel _platform = MethodChannel('com.zsdev.fpsmonitor/channel');
 
@@ -38,6 +40,9 @@ Future<void> main() async {
         DeviceOrientation.portraitDown,
       ]);
       await _initStorage();
+      await MonitorService.instance.loadSettings();
+      await MonitorService.instance.recoverInterruptedSession();
+      await ShizukuService.instance.getDeviceInfo();
       await NotificationService.instance.init();
     } catch (e, st) {
       startupError = e;

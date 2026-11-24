@@ -37,6 +37,7 @@ class OverlayService : Service() {
     private var tempText: TextView? = null
     private var usageText: TextView? = null
     private var ramText: TextView? = null
+    private var powerText: TextView? = null
 
     private var config = OverlayConfig()
 
@@ -47,6 +48,9 @@ class OverlayService : Service() {
     private var freeRam = -1.0
     private var cpuUsage = -1.0
     private var gpuUsage = -1.0
+    private var batteryCurrentMa = -1.0
+    private var batteryPowerWatts = -1.0
+    private var paused = false
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -85,6 +89,7 @@ class OverlayService : Service() {
             tempText = view.findViewById(R.id.temp_text)
             usageText = view.findViewById(R.id.usage_text)
             ramText = view.findViewById(R.id.ram_text)
+            powerText = view.findViewById(R.id.power_text)
 
             val params = WindowManager.LayoutParams(
                 WindowManager.LayoutParams.WRAP_CONTENT,
@@ -177,7 +182,7 @@ class OverlayService : Service() {
     // ------------------------------------------------------------- look & content
 
     private fun hasOtherLines(c: OverlayConfig) =
-        c.showCpuTemp || c.showGpuTemp || c.showRam || c.showCpuUsage || c.showGpuUsage
+        c.showCpuTemp || c.showGpuTemp || c.showRam || c.showCpuUsage || c.showGpuUsage || c.showPower
 
     /** FPS is forced on if the user switched everything off, so the bar is never empty. */
     private fun fpsVisible(c: OverlayConfig) = c.showFps || !hasOtherLines(c)
@@ -214,13 +219,13 @@ class OverlayService : Service() {
 
         // Text sizes
         fpsText?.setTextSize(TypedValue.COMPLEX_UNIT_SP, (if (onlyFps) 28f else 21f) * scale)
-        listOf(tempText, usageText, ramText).forEach {
+        listOf(tempText, usageText, ramText, powerText).forEach {
             it?.setTextSize(TypedValue.COMPLEX_UNIT_SP, 11f * scale)
         }
 
         // Soft shadow so transparent / faint bars stay readable on bright game scenes
         val shadowRadius = if (c.bgOpacity < 40) dp(3).toFloat() else 0f
-        listOf(fpsText, tempText, usageText, ramText).forEach {
+        listOf(fpsText, tempText, usageText, ramText, powerText).forEach {
             it?.setShadowLayer(shadowRadius, 0f, 1f, Color.BLACK)
         }
 
@@ -229,6 +234,7 @@ class OverlayService : Service() {
         tempText?.visibility = if (c.showCpuTemp || c.showGpuTemp) View.VISIBLE else View.GONE
         usageText?.visibility = if (c.showCpuUsage || c.showGpuUsage) View.VISIBLE else View.GONE
         ramText?.visibility = if (c.showRam) View.VISIBLE else View.GONE
+        powerText?.visibility = if (c.showPower) View.VISIBLE else View.GONE
     }
 
     private fun readValues(intent: Intent) {
@@ -238,16 +244,24 @@ class OverlayService : Service() {
         freeRam = intent.getDoubleExtra(EXTRA_FREE_RAM, -1.0)
         cpuUsage = intent.getDoubleExtra(EXTRA_CPU_USAGE, -1.0)
         gpuUsage = intent.getDoubleExtra(EXTRA_GPU_USAGE, -1.0)
+        batteryCurrentMa = intent.getDoubleExtra(EXTRA_CURRENT_MA, -1.0)
+        batteryPowerWatts = intent.getDoubleExtra(EXTRA_POWER_WATTS, -1.0)
+        paused = intent.getBooleanExtra(EXTRA_PAUSED, false)
     }
 
     /** Writes the latest values into the visible lines. */
     private fun render() {
         val c = config
 
-        val fpsValue = if (fps >= 0) "${fps.toInt()}" else "--"
-        // The "FPS" label is optional; the lone-number look reads best without it
-        fpsText?.text = if (c.showFpsLabel) "$fpsValue FPS" else fpsValue
-        fpsText?.setTextColor(fpsColor(fps))
+        if (paused) {
+            fpsText?.text = "PAUSED"
+            fpsText?.setTextColor(0xFFFBBF24.toInt())
+        } else {
+            val fpsValue = if (fps >= 0) "${fps.toInt()}" else "--"
+            // The "FPS" label is optional; the lone-number look reads best without it
+            fpsText?.text = if (c.showFpsLabel) "$fpsValue FPS" else fpsValue
+            fpsText?.setTextColor(fpsColor(fps))
+        }
 
         val temps = mutableListOf<String>()
         if (c.showCpuTemp) temps.add("CPU ${fmtTemp(cpuTemp)}")
@@ -260,6 +274,10 @@ class OverlayService : Service() {
         usageText?.text = usage.joinToString("  ")
 
         ramText?.text = if (freeRam >= 0) "RAM ${freeRam.toInt()} MB free" else "RAM -- MB free"
+
+        val maText = if (batteryCurrentMa >= 0) "${"%.0f".format(batteryCurrentMa)} mA" else "-- mA"
+        val wText = if (batteryPowerWatts >= 0) "${"%.2f".format(batteryPowerWatts)} W" else "-- W"
+        powerText?.text = "$maText  $wText"
     }
 
     /** 55+ green (60, 90, 120...), 30-54 yellow, below 30 red. */
@@ -280,6 +298,7 @@ class OverlayService : Service() {
         tempText = null
         usageText = null
         ramText = null
+        powerText = null
         stopSelf()
     }
 
@@ -322,6 +341,9 @@ class OverlayService : Service() {
         const val EXTRA_FREE_RAM = "freeRamMb"
         const val EXTRA_CPU_USAGE = "cpuUsage"
         const val EXTRA_GPU_USAGE = "gpuUsage"
+        const val EXTRA_CURRENT_MA = "batteryCurrentMa"
+        const val EXTRA_POWER_WATTS = "batteryPowerWatts"
+        const val EXTRA_PAUSED = "paused"
 
         fun start(context: Context) {
             val intent = Intent(context, OverlayService::class.java).setAction(ACTION_START)
@@ -335,7 +357,10 @@ class OverlayService : Service() {
             gpuTemp: Double,
             freeRamMb: Double,
             cpuUsage: Double = -1.0,
-            gpuUsage: Double = -1.0
+            gpuUsage: Double = -1.0,
+            batteryCurrentMa: Double = -1.0,
+            batteryPowerWatts: Double = -1.0,
+            paused: Boolean = false
         ) {
             val intent = Intent(context, OverlayService::class.java)
                 .setAction(ACTION_UPDATE)
@@ -345,6 +370,9 @@ class OverlayService : Service() {
                 .putExtra(EXTRA_FREE_RAM, freeRamMb)
                 .putExtra(EXTRA_CPU_USAGE, cpuUsage)
                 .putExtra(EXTRA_GPU_USAGE, gpuUsage)
+                .putExtra(EXTRA_CURRENT_MA, batteryCurrentMa)
+                .putExtra(EXTRA_POWER_WATTS, batteryPowerWatts)
+                .putExtra(EXTRA_PAUSED, paused)
             context.startService(intent)
         }
 

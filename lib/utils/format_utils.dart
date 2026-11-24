@@ -4,6 +4,8 @@ class Fmt {
 
   static String temp(double v) => v >= 0 ? '${v.toStringAsFixed(0)}°C' : '--';
 
+  static String tempExact(double v) => v >= 0 ? '${v.toStringAsFixed(1)}°C' : '--';
+
   static String percent(double v) => v >= 0 ? '${v.toStringAsFixed(0)}%' : '--';
 
   static String mb(double v) => v >= 0 ? '${v.toStringAsFixed(0)} MB' : '--';
@@ -14,6 +16,12 @@ class Fmt {
       v >= 0 ? '${v.toStringAsFixed(1)} MB/s' : '--';
 
   static String ramFree(double v) => v >= 0 ? '${v.toStringAsFixed(0)} MB free' : '-- MB';
+
+  static String currentMa(double v) =>
+      v >= 0 ? '${v.toStringAsFixed(0)} mA' : '--';
+
+  static String watts(double v) =>
+      v >= 0 ? '${v.toStringAsFixed(2)} W' : '--';
 
   static const List<String> _months = [
     'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',

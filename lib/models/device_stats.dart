@@ -26,6 +26,12 @@ class DeviceStats {
   /// Display refresh rate, FPS.
   final double refreshRate;
 
+  /// Instantaneous / average battery current draw in milliamperes (-1 = unknown).
+  final double batteryCurrentMa;
+
+  /// Estimated battery power draw in watts (-1 = unknown).
+  final double batteryPowerWatts;
+
   /// When the sample was taken.
   final DateTime timestamp;
 
@@ -38,6 +44,8 @@ class DeviceStats {
     required this.gpuUsage,
     required this.storageSpeed,
     required this.refreshRate,
+    this.batteryCurrentMa = -1.0,
+    this.batteryPowerWatts = -1.0,
     required this.timestamp,
   });
 
@@ -57,6 +65,8 @@ class DeviceStats {
       gpuUsage: num0('gpuUsage'),
       storageSpeed: num0('storageSpeed'),
       refreshRate: num0('refreshRate', 60.0),
+      batteryCurrentMa: num0('batteryCurrentMa'),
+      batteryPowerWatts: num0('batteryPowerWatts'),
       timestamp: DateTime.now(),
     );
   }
@@ -70,6 +80,8 @@ class DeviceStats {
     double? gpuUsage,
     double? storageSpeed,
     double? refreshRate,
+    double? batteryCurrentMa,
+    double? batteryPowerWatts,
     DateTime? timestamp,
   }) {
     return DeviceStats(
@@ -81,6 +93,8 @@ class DeviceStats {
       gpuUsage: gpuUsage ?? this.gpuUsage,
       storageSpeed: storageSpeed ?? this.storageSpeed,
       refreshRate: refreshRate ?? this.refreshRate,
+      batteryCurrentMa: batteryCurrentMa ?? this.batteryCurrentMa,
+      batteryPowerWatts: batteryPowerWatts ?? this.batteryPowerWatts,
       timestamp: timestamp ?? this.timestamp,
     );
   }

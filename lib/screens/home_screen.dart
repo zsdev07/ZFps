@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../models/installed_app.dart';
+import '../models/session.dart';
 import '../services/monitor_service.dart';
 import '../services/shizuku_service.dart';
 import '../utils/format_utils.dart';
@@ -12,6 +13,7 @@ import '../widgets/stat_card.dart';
 import 'app_selection_screen.dart';
 import 'customize_screen.dart';
 import 'report_screen.dart';
+import 'settings_screen.dart';
 
 const Color _bg = Color(0xFF0D1117);
 const Color _card = Color(0xFF161C27);
@@ -36,6 +38,10 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   ShizukuStatus _shizuku = const ShizukuStatus.offline();
   bool _overlayGranted = false;
+  bool _batteryUnrestricted = true;
+  bool _batteryChecked = false;
+  bool _notificationsGranted = true;
+  bool _skippedBatteryPrompt = false;
   bool _busy = false;
   InstalledApp? _selectedApp;
   Timer? _statusTimer;
@@ -57,10 +63,17 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _refresh({bool silent = false}) async {
     final status = await ShizukuService.instance.checkShizuku();
     final overlay = await ShizukuService.instance.checkOverlayPermission();
+    final battery =
+        await ShizukuService.instance.isBatteryOptimizationIgnored();
+    final notifications =
+        await ShizukuService.instance.isNotificationPermissionGranted();
     if (!mounted) return;
     setState(() {
       _shizuku = status;
       _overlayGranted = overlay;
+      _batteryUnrestricted = battery;
+      _batteryChecked = true;
+      _notificationsGranted = notifications;
     });
   }
 
@@ -76,6 +89,81 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _requestOverlay() async {
     await ShizukuService.instance.requestOverlayPermission();
+  }
+
+  Future<void> _requestBatteryUnrestricted() async {
+    await ShizukuService.instance.requestIgnoreBatteryOptimization();
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await _refresh();
+  }
+
+  Future<void> _openBatterySettings() async {
+    await ShizukuService.instance.openBatterySettings();
+  }
+
+  Future<void> _requestNotificationPermission() async {
+    await ShizukuService.instance.requestNotificationPermission();
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+    await _refresh();
+  }
+
+  Future<bool> _promptUnrestrictedBattery() async {
+    final grant = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _card,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
+          side: const BorderSide(color: _border),
+        ),
+        title: const Row(
+          children: [
+            Icon(Icons.battery_saver_rounded, color: _amber, size: 22),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Grant Unrestricted Battery?',
+                style: TextStyle(
+                  color: _text,
+                  fontSize: 16.5,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ],
+        ),
+        content: const Text(
+          'OEM battery savers (like Funtouch OS) can kill background collectors '
+          'when free RAM drops below 300 MB mid-match.\n\n'
+          'Allowing Unrestricted Battery keeps the high-priority foreground '
+          'service alive through full matches.',
+          style: TextStyle(color: _textDim, fontSize: 13, height: 1.45),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Start anyway',
+                style: TextStyle(color: _textDim)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _amber,
+              foregroundColor: const Color(0xFF2E2104),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(10),
+              ),
+            ),
+            child: const Text(
+              'Grant Unrestricted Battery',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+    return grant == true;
   }
 
   Future<void> _pickApp() async {
@@ -97,6 +185,18 @@ class _HomeScreenState extends State<HomeScreen> {
       _showSnack('Bind Shizuku first — it is required for hardware metrics.');
       await _refresh();
       return;
+    }
+    if (!_notificationsGranted) {
+      await _requestNotificationPermission();
+    }
+    if (_batteryChecked && !_batteryUnrestricted && !_skippedBatteryPrompt) {
+      final wantsGrant = await _promptUnrestrictedBattery();
+      if (!mounted) return;
+      if (wantsGrant) {
+        await _requestBatteryUnrestricted();
+        return;
+      }
+      _skippedBatteryPrompt = true;
     }
     if (_selectedApp == null) {
       await _pickApp();
@@ -194,6 +294,13 @@ class _HomeScreenState extends State<HomeScreen> {
               MaterialPageRoute(builder: (_) => const ReportScreen()),
             ),
           ),
+          IconButton(
+            tooltip: 'Settings',
+            icon: const Icon(Icons.settings_outlined, color: _textDim),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SettingsScreen()),
+            ),
+          ),
           const SizedBox(width: 4),
         ],
       ),
@@ -206,6 +313,22 @@ class _HomeScreenState extends State<HomeScreen> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
               children: [
+                if (monitor.lastRecoveredSession != null) ...[
+                  _RecoveredBanner(
+                    session: monitor.lastRecoveredSession!,
+                    onView: () {
+                      final id = monitor.lastRecoveredSession!.id;
+                      monitor.clearRecoveredNotice();
+                      Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => ReportScreen(focusSessionId: id),
+                        ),
+                      );
+                    },
+                    onDismiss: monitor.clearRecoveredNotice,
+                  ),
+                  const SizedBox(height: 12),
+                ],
                 _ShizukuCard(
                   status: _shizuku,
                   onBind: _bindShizuku,
@@ -218,6 +341,16 @@ class _HomeScreenState extends State<HomeScreen> {
                   onGrant: _requestOverlay,
                   onRefresh: _refresh,
                 ),
+                if (_batteryChecked) ...[
+                  const SizedBox(height: 12),
+                  _BatteryCard(
+                    batteryUnrestricted: _batteryUnrestricted,
+                    notificationsGranted: _notificationsGranted,
+                    onGrantBattery: _requestBatteryUnrestricted,
+                    onOpenBatterySettings: _openBatterySettings,
+                    onGrantNotification: _requestNotificationPermission,
+                  ),
+                ],
                 const SizedBox(height: 12),
                 _CustomizeCard(
                   onTap: () => Navigator.of(context).push(
@@ -267,21 +400,58 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (monitor.isMonitoring) {
-      return SizedBox(
-        height: 56,
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          onPressed: _stop,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _red,
-            foregroundColor: const Color(0xFF210A0A),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-            elevation: 0,
+      final paused = monitor.isPaused;
+      return Row(
+        children: [
+          Expanded(
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: paused
+                    ? () => monitor.resumeSession()
+                    : () => monitor.pauseSession(),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: paused ? _green : _amber,
+                  foregroundColor: const Color(0xFF14181F),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                icon: Icon(
+                  paused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  size: 24,
+                ),
+                label: Text(
+                  paused ? 'RESUME' : 'PAUSE',
+                  style: const TextStyle(
+                      fontWeight: FontWeight.w800, letterSpacing: 1.0),
+                ),
+              ),
+            ),
           ),
-          icon: const Icon(Icons.stop_rounded, size: 26),
-          label: const Text('STOP MONITORING',
-              style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.1)),
-        ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: SizedBox(
+              height: 56,
+              child: ElevatedButton.icon(
+                onPressed: _stop,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: _red,
+                  foregroundColor: const Color(0xFF210A0A),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16)),
+                  elevation: 0,
+                ),
+                icon: const Icon(Icons.stop_rounded, size: 24),
+                label: const Text(
+                  'STOP',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w800, letterSpacing: 1.0),
+                ),
+              ),
+            ),
+          ),
+        ],
       );
     }
 
@@ -662,14 +832,17 @@ class _LivePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final s = monitor.current;
+    final paused = monitor.isPaused;
     final fps = s?.fps ?? -1;
-    final fpsColor = fps < 0
-        ? _textDim
-        : fps >= 50
-            ? _green
-            : fps >= 30
-                ? _amber
-                : _red;
+    final fpsColor = paused
+        ? _amber
+        : fps < 0
+            ? _textDim
+            : fps >= 50
+                ? _green
+                : fps >= 30
+                    ? _amber
+                    : _red;
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
@@ -689,18 +862,41 @@ class _LivePanel extends StatelessWidget {
               Container(
                 width: 8,
                 height: 8,
-                decoration: const BoxDecoration(
-                  color: _red,
+                decoration: BoxDecoration(
+                  color: paused ? _amber : _red,
                   shape: BoxShape.circle,
                 ),
               ),
               const SizedBox(width: 8),
-              const Text('LIVE',
+              Text(paused ? 'PAUSED' : 'LIVE',
                   style: TextStyle(
-                      color: _red,
+                      color: paused ? _amber : _red,
                       fontWeight: FontWeight.w900,
                       letterSpacing: 2,
                       fontSize: 11)),
+              if (monitor.liveStability != null) ...[
+                const SizedBox(width: 10),
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: (monitor.liveStability! >= 90
+                            ? _green
+                            : (monitor.liveStability! >= 75 ? _amber : _red))
+                        .withOpacity(0.14),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: Text(
+                    'Stability ${monitor.liveStability!.toStringAsFixed(0)}%',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      color: monitor.liveStability! >= 90
+                          ? _green
+                          : (monitor.liveStability! >= 75 ? _amber : _red),
+                    ),
+                  ),
+                ),
+              ],
               const Spacer(),
               const Icon(Icons.timer_outlined, size: 15, color: _textDim),
               const SizedBox(width: 5),
@@ -718,7 +914,7 @@ class _LivePanel extends StatelessWidget {
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Text(
-                s == null ? '--' : Fmt.fps(fps),
+                paused ? 'II' : (s == null ? '--' : Fmt.fps(fps)),
                 style: TextStyle(
                   fontSize: 72,
                   fontWeight: FontWeight.w900,
@@ -727,14 +923,28 @@ class _LivePanel extends StatelessWidget {
                   letterSpacing: -2,
                 ),
               ),
-              const Padding(
-                padding: EdgeInsets.only(bottom: 10, left: 8),
-                child: Text('FPS',
-                    style: TextStyle(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 10, left: 8),
+                child: Text(paused ? 'PAUSED' : 'FPS',
+                    style: const TextStyle(
                         color: _textDim, fontWeight: FontWeight.w800, fontSize: 15)),
               ),
             ],
           ),
+          if (monitor.excludedSamples > 0) ...[
+            const SizedBox(height: 6),
+            Text(
+              '${monitor.excludedSamples} loading spike${monitor.excludedSamples == 1 ? '' : 's'} excluded',
+              style: const TextStyle(fontSize: 11, color: _blue),
+            ),
+          ],
+          if (monitor.csvFlushedRows > 0) ...[
+            const SizedBox(height: 4),
+            Text(
+              'CSV auto-saved • ${monitor.csvFlushedRows} row${monitor.csvFlushedRows == 1 ? '' : 's'}',
+              style: const TextStyle(fontSize: 10.5, color: _textDim),
+            ),
+          ],
           const SizedBox(height: 12),
           GridView.count(
             shrinkWrap: true,
@@ -779,6 +989,18 @@ class _LivePanel extends StatelessWidget {
                 label: 'STORAGE',
                 value: Fmt.speed(s?.storageSpeed ?? -1),
                 accent: const Color(0xFF34D399),
+              ),
+              StatCard(
+                icon: Icons.bolt_outlined,
+                label: 'BATTERY mA',
+                value: Fmt.currentMa(s?.batteryCurrentMa ?? -1),
+                accent: _amber,
+              ),
+              StatCard(
+                icon: Icons.power_outlined,
+                label: 'POWER DRAW',
+                value: Fmt.watts(s?.batteryPowerWatts ?? -1),
+                accent: const Color(0xFFFB923C),
               ),
             ],
           ),
@@ -839,6 +1061,242 @@ class _CustomizeCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _BatteryCard extends StatelessWidget {
+  final bool batteryUnrestricted;
+  final bool notificationsGranted;
+  final VoidCallback onGrantBattery;
+  final VoidCallback onOpenBatterySettings;
+  final VoidCallback onGrantNotification;
+
+  const _BatteryCard({
+    required this.batteryUnrestricted,
+    required this.notificationsGranted,
+    required this.onGrantBattery,
+    required this.onOpenBatterySettings,
+    required this.onGrantNotification,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final allReady = batteryUnrestricted && notificationsGranted;
+    final accent = allReady ? _green : _amber;
+
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: _card,
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(
+          color: allReady ? _border : const Color(0xFF3D331F),
+        ),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 42,
+            height: 42,
+            decoration: BoxDecoration(
+              color: accent.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              allReady
+                  ? Icons.shield_outlined
+                  : Icons.battery_alert_outlined,
+              color: accent,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  batteryUnrestricted
+                      ? (notificationsGranted
+                          ? 'Background protection active'
+                          : 'Persistent notification disabled')
+                      : 'Unrestricted battery',
+                  style: const TextStyle(
+                    color: _text,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 13.5,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  batteryUnrestricted
+                      ? (notificationsGranted
+                          ? 'High-priority foreground service & 6 s CSV auto-save active'
+                          : 'Allow notifications to pin the live foreground service')
+                      : 'Prevents Funtouch OS / Android from killing monitoring when free RAM drops < 300 MB',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    color: _textDim,
+                    height: 1.35,
+                  ),
+                ),
+                if (!batteryUnrestricted) ...[
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 6,
+                    children: [
+                      SizedBox(
+                        height: 34,
+                        child: ElevatedButton.icon(
+                          onPressed: onGrantBattery,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _amber,
+                            foregroundColor: const Color(0xFF2E2104),
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          icon: const Icon(Icons.battery_saver_rounded, size: 15),
+                          label: const Text(
+                            'Grant Unrestricted Battery',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        height: 34,
+                        child: OutlinedButton(
+                          onPressed: onOpenBatterySettings,
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: _textDim,
+                            side: const BorderSide(color: _border),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          child: const Text(
+                            'App info',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 11.5,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ] else if (!notificationsGranted) ...[
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    height: 34,
+                    child: ElevatedButton.icon(
+                      onPressed: onGrantNotification,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _amber,
+                        foregroundColor: const Color(0xFF2E2104),
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                      ),
+                      icon: const Icon(
+                        Icons.notifications_active_outlined,
+                        size: 15,
+                      ),
+                      label: const Text(
+                        'Allow notifications',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          if (allReady)
+            const Padding(
+              padding: EdgeInsets.only(left: 4, top: 8),
+              child: Icon(Icons.check_circle_rounded, color: _green, size: 26),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RecoveredBanner extends StatelessWidget {
+  final Session session;
+  final VoidCallback onView;
+  final VoidCallback onDismiss;
+
+  const _RecoveredBanner({
+    required this.session,
+    required this.onView,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF132234),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: _blue.withOpacity(0.45)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.restore_rounded, color: _blue, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Interrupted session recovered',
+                  style: TextStyle(
+                    color: _text,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 1),
+                Text(
+                  '${session.appName} • ${session.durationFormatted} restored from auto-saved CSV',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: _textDim, fontSize: 11),
+                ),
+              ],
+            ),
+          ),
+          TextButton(
+            onPressed: onView,
+            child: const Text(
+              'View',
+              style: TextStyle(color: _green, fontWeight: FontWeight.w800),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close_rounded, color: _textDim, size: 18),
+            onPressed: onDismiss,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
       ),
     );
   }

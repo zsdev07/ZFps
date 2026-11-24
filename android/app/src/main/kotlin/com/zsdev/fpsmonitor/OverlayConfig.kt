@@ -14,6 +14,7 @@ data class OverlayConfig(
     val showRam: Boolean = true,
     val showCpuUsage: Boolean = false,
     val showGpuUsage: Boolean = false,
+    val showPower: Boolean = false,
     /** 0 = fully transparent, 100 = solid dark card */
     val bgOpacity: Int = 90,
     /** Text size multiplier */
@@ -28,6 +29,7 @@ data class OverlayConfig(
         "showRam" to showRam,
         "showCpuUsage" to showCpuUsage,
         "showGpuUsage" to showGpuUsage,
+        "showPower" to showPower,
         "bgOpacity" to bgOpacity,
         "textScale" to textScale.toDouble()
     )
@@ -41,6 +43,7 @@ data class OverlayConfig(
             .putBoolean("showRam", showRam)
             .putBoolean("showCpuUsage", showCpuUsage)
             .putBoolean("showGpuUsage", showGpuUsage)
+            .putBoolean("showPower", showPower)
             .putInt("bgOpacity", bgOpacity)
             .putFloat("textScale", textScale)
             .apply()
@@ -60,6 +63,7 @@ data class OverlayConfig(
                 showRam = p.getBoolean("showRam", d.showRam),
                 showCpuUsage = p.getBoolean("showCpuUsage", d.showCpuUsage),
                 showGpuUsage = p.getBoolean("showGpuUsage", d.showGpuUsage),
+                showPower = p.getBoolean("showPower", d.showPower),
                 bgOpacity = p.getInt("bgOpacity", d.bgOpacity).coerceIn(0, 100),
                 textScale = p.getFloat("textScale", d.textScale).coerceIn(0.6f, 2.0f)
             )
@@ -76,6 +80,7 @@ data class OverlayConfig(
                 showRam = b("showRam", d.showRam),
                 showCpuUsage = b("showCpuUsage", d.showCpuUsage),
                 showGpuUsage = b("showGpuUsage", d.showGpuUsage),
+                showPower = b("showPower", d.showPower),
                 bgOpacity = ((map["bgOpacity"] as? Number)?.toInt() ?: d.bgOpacity).coerceIn(0, 100),
                 textScale = ((map["textScale"] as? Number)?.toFloat() ?: d.textScale).coerceIn(0.6f, 2.0f)
             )

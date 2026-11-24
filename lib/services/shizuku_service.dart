@@ -1,5 +1,6 @@
 import 'package:flutter/services.dart';
 
+import '../models/device_info.dart';
 import '../models/device_stats.dart';
 import '../models/installed_app.dart';
 
@@ -70,6 +71,24 @@ class ShizukuService {
   static final ShizukuService instance = ShizukuService._();
 
   static const MethodChannel _channel = MethodChannel('com.zsdev.fpsmonitor/channel');
+
+  DeviceInfo? _cachedDeviceInfo;
+
+  DeviceInfo? get cachedDeviceInfo => _cachedDeviceInfo;
+
+  Future<DeviceInfo?> getDeviceInfo({bool refresh = false}) async {
+    if (!refresh && _cachedDeviceInfo != null) return _cachedDeviceInfo;
+    try {
+      final res = await _channel.invokeMapMethod<String, dynamic>('getDeviceInfo');
+      if (res == null) return _cachedDeviceInfo;
+      _cachedDeviceInfo = DeviceInfo.fromMap(res);
+      return _cachedDeviceInfo;
+    } on PlatformException {
+      return _cachedDeviceInfo;
+    } on MissingPluginException {
+      return _cachedDeviceInfo;
+    }
+  }
 
   Future<ShizukuStatus> checkShizuku() async {
     try {
@@ -173,6 +192,65 @@ class ShizukuService {
     try {
       return await _channel.invokeMethod<bool>('requestOverlayPermission') ?? false;
     } on PlatformException {
+      return false;
+    }
+  }
+
+  // --------------------------------------------------- battery & alerts
+
+  /// True when the system is not restricting background battery usage for
+  /// this app (crucial on OEM ROMs like Funtouch OS when RAM drops < 300 MB).
+  Future<bool> isBatteryOptimizationIgnored() async {
+    try {
+      return await _channel.invokeMethod<bool>('checkBatteryOptimization') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Launches Android's quick "Allow app to always run in background" prompt.
+  Future<bool> requestIgnoreBatteryOptimization() async {
+    try {
+      return await _channel.invokeMethod<bool>('requestIgnoreBatteryOptimization') ??
+          false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// Opens App Info / Battery settings so OEM toggles (e.g. "Unrestricted" /
+  /// "Allow high background power consumption") can be configured manually.
+  Future<bool> openBatterySettings() async {
+    try {
+      return await _channel.invokeMethod<bool>('openBatterySettings') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
+      return false;
+    }
+  }
+
+  /// True when notifications are enabled and POST_NOTIFICATIONS is granted.
+  Future<bool> isNotificationPermissionGranted() async {
+    try {
+      return await _channel.invokeMethod<bool>('checkNotificationPermission') ?? true;
+    } on PlatformException {
+      return true;
+    } on MissingPluginException {
+      return true;
+    }
+  }
+
+  Future<bool> requestNotificationPermission() async {
+    try {
+      return await _channel.invokeMethod<bool>('requestNotificationPermission') ?? false;
+    } on PlatformException {
+      return false;
+    } on MissingPluginException {
       return false;
     }
   }

@@ -42,4 +42,13 @@
         android:text="RAM -- MB free"
         android:textColor="#9CA3AF"
         android:textSize="11sp" />
+
+    <TextView
+        android:id="@+id/power_text"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="1dp"
+        android:text="-- mA  -- W"
+        android:textColor="#FBBF24"
+        android:textSize="11sp" />
 </LinearLayout>

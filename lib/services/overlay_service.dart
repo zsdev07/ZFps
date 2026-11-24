@@ -32,7 +32,7 @@ class OverlayService {
   }
 
   /// Push fresh stats into the overlay window (top-right corner).
-  Future<void> updateOverlay(DeviceStats stats) async {
+  Future<void> updateOverlay(DeviceStats stats, {bool paused = false}) async {
     try {
       await _channel.invokeMethod<bool>('updateOverlay', {
         'fps': stats.fps,
@@ -41,6 +41,9 @@ class OverlayService {
         'freeRamMb': stats.freeRamMb,
         'cpuUsage': stats.cpuUsage,
         'gpuUsage': stats.gpuUsage,
+        'batteryCurrentMa': stats.batteryCurrentMa,
+        'batteryPowerWatts': stats.batteryPowerWatts,
+        'paused': paused,
       });
     } on PlatformException {
       // Overlay may be gone (user revoked permission); ignore.

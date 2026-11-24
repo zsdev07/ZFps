@@ -3,11 +3,13 @@ package com.zsdev.fpsmonitor
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.BitmapDrawable
 import android.graphics.drawable.Drawable
+import android.os.BatteryManager
 import android.os.Build
 import android.util.Log
 import android.view.WindowManager
@@ -16,6 +18,7 @@ import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
 import java.util.Random
+import kotlin.math.abs
 
 /**
  * Collects runtime performance metrics.
@@ -51,7 +54,7 @@ class SystemMetrics(private val context: Context) {
         // One shell call that prints "tag:value" lines for every GPU node that exists.
         // r() = read a file into one line and echo it with a tag.
         const val GPU_SCRIPT =
-            "r() { v=\$(cat \$2 2>/dev/null | tr '\\n' ' '); [ -n \"\$v\" ] && echo \"\$1:\$v\"; }; " +
+            "r() { v=\$(cat \"\$2\" 2>/dev/null | tr '\\n' ' '); [ -n \"\$v\" ] && echo \"\$1:\$v\"; }; " +
                 "r kgsl_pct /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage; " +
                 "r kgsl_busy /sys/class/kgsl/kgsl-3d0/gpubusy; " +
                 "r kgsl_load /sys/class/kgsl/kgsl-3d0/devfreq/gpu_load; " +
@@ -62,11 +65,37 @@ class SystemMetrics(private val context: Context) {
                 "r mali /sys/class/misc/mali0/device/utilization; " +
                 "r mali /proc/mali/utilization; " +
                 "r mali /sys/devices/platform/mali/utilization; " +
-                "r mali /sys/devices/platform/*.mali/utilization; " +
-                "for d in /sys/class/devfreq/*; do case \"\$d\" in *bw*) ;; *gpu*|*mali*|*kgsl*|*g3d*) " +
-                "r devfreq_load \$d/load; " +
-                "c=\$(cat \$d/cur_freq 2>/dev/null); m=\$(cat \$d/max_freq 2>/dev/null); " +
-                "[ -n \"\$c\" ] && [ -n \"\$m\" ] && echo \"freq:\$c \$m\";; esac; done; true"
+                "for f in /sys/devices/platform/*.mali/utilization " +
+                "/sys/devices/platform/soc/*.mali/utilization " +
+                "/sys/devices/platform/*.gpu/utilization " +
+                "/sys/devices/platform/soc/*.gpu/utilization; do " +
+                "[ -e \"\$f\" ] && r mali \"\$f\"; done; " +
+                "for f in /sys/class/drm/card*/device/gpu_busy_percent; do " +
+                "[ -e \"\$f\" ] && r drm_busy \"\$f\"; done; " +
+                "for d in /sys/class/devfreq/*; do " +
+                "case \"\$d\" in *bw*|*bus*|*mem*|*ddr*|*l3*) ;; " +
+                "*gpu*|*mali*|*kgsl*|*g3d*|*sgpu*|*adreno*|*pvr*|*rogue*|*rgx*|*valhall*) " +
+                "r devfreq_load \"\$d/load\"; " +
+                "r devfreq_load \"\$d/utilization\"; " +
+                "c=\$(cat \"\$d/cur_freq\" 2>/dev/null); " +
+                "m=\$(cat \"\$d/max_freq\" 2>/dev/null); " +
+                "a=\$(cat \"\$d/available_frequencies\" 2>/dev/null | tr '\\n' ' '); " +
+                "[ -n \"\$c\" ] && [ -n \"\$m\" ] && echo \"freq:\$c \$m\"; " +
+                "[ -n \"\$c\" ] && [ -n \"\$a\" ] && echo \"freq_avail:\$c \$a\";; esac; done; " +
+                "kc=\$(cat /sys/class/kgsl/kgsl-3d0/gpuclk 2>/dev/null); " +
+                "km=\$(cat /sys/class/kgsl/kgsl-3d0/max_gpuclk 2>/dev/null); " +
+                "ka=\$(cat /sys/class/kgsl/kgsl-3d0/gpu_available_frequencies 2>/dev/null | tr '\\n' ' '); " +
+                "[ -n \"\$kc\" ] && [ -n \"\$km\" ] && echo \"freq:\$kc \$km\"; " +
+                "[ -n \"\$kc\" ] && [ -n \"\$ka\" ] && echo \"freq_avail:\$kc \$ka\"; " +
+                "gc=\$(cat /sys/kernel/gpu/gpu_clock 2>/dev/null); " +
+                "gm=\$(cat /sys/kernel/gpu/gpu_max_clock 2>/dev/null); " +
+                "ga=\$(cat /sys/kernel/gpu/gpu_available_frequencies 2>/dev/null | tr '\\n' ' '); " +
+                "[ -n \"\$gc\" ] && [ -n \"\$gm\" ] && echo \"freq:\$gc \$gm\"; " +
+                "[ -n \"\$gc\" ] && [ -n \"\$ga\" ] && echo \"freq_avail:\$gc \$ga\"; " +
+                "gs=\$(cat /proc/gpufreqv2/gpufreq_status 2>/dev/null | tr '\\n' ' '); " +
+                "gt=\$(cat /proc/gpufreqv2/gpu_working_opp_table 2>/dev/null | head -n 5 | tr '\\n' ' '); " +
+                "[ -n \"\$gs\" ] && [ -n \"\$gt\" ] && echo \"mtk_gpufreq:\$gs|\$gt\"; " +
+                "true"
         const val HAL_CACHE_MS = 5000L
         const val HAL_CPU = 0
         const val HAL_GPU = 1
@@ -100,6 +129,7 @@ class SystemMetrics(private val context: Context) {
         val freeRam = readFreeRamMb(shizuku)
         val cpuUsage = readCpuUsagePercent(shizuku)
         val gpuUsage = readGpuUsagePercent(shizuku)
+        val batteryPower = readBatteryPower(shizuku)
 
         val storage = if (includeStorage) {
             benchmarkStorageSpeed()
@@ -117,8 +147,124 @@ class SystemMetrics(private val context: Context) {
             "cpuUsage" to cpuUsage,
             "gpuUsage" to gpuUsage,
             "storageSpeed" to storage,
-            "refreshRate" to refreshRate
+            "refreshRate" to refreshRate,
+            "batteryCurrentMa" to batteryPower.first,
+            "batteryPowerWatts" to batteryPower.second
         )
+    }
+
+    // ------------------------------------------------------------------ device info
+
+    fun deviceInfo(shizuku: ShizukuClient): Map<String, Any> {
+        val manufacturer = Build.MANUFACTURER?.trim().orEmpty()
+        val model = Build.MODEL?.trim().orEmpty()
+        val prettyMfg = if (manufacturer.isNotEmpty() && manufacturer[0].isLowerCase()) {
+            manufacturer[0].uppercaseChar() + manufacturer.substring(1)
+        } else {
+            manufacturer
+        }
+        val deviceModel = when {
+            model.isEmpty() -> prettyMfg.ifEmpty { "Android Device" }
+            prettyMfg.isEmpty() -> model
+            model.lowercase().startsWith(prettyMfg.lowercase()) -> model
+            else -> "$prettyMfg $model"
+        }
+
+        val socName = resolveSocName(shizuku)
+        val totalRamMb = readTotalRamMb(shizuku)
+
+        return mapOf(
+            "deviceModel" to deviceModel,
+            "socName" to socName,
+            "totalRamMb" to totalRamMb
+        )
+    }
+
+    private fun resolveSocName(shizuku: ShizukuClient): String {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val socModel = Build.SOC_MODEL?.trim()
+                ?.takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
+            val socMfg = Build.SOC_MANUFACTURER?.trim()
+                ?.takeIf { it.isNotEmpty() && !it.equals("unknown", ignoreCase = true) }
+            if (socModel != null) {
+                return if (socMfg != null && !socModel.lowercase().contains(socMfg.lowercase())) {
+                    "$socMfg $socModel"
+                } else {
+                    socModel
+                }
+            }
+        }
+
+        try {
+            val out = shizuku.runShell(
+                "for p in ro.soc.model ro.vendor.qti.soc_name ro.hardware.chipname " +
+                    "ro.mediatek.platform ro.board.platform; do " +
+                    "v=\$(getprop \$p 2>/dev/null); [ -n \"\$v\" ] && echo \"\$p=\$v\"; done; " +
+                    "grep -m1 -i '^Hardware' /proc/cpuinfo 2>/dev/null; true"
+            )
+            val props = HashMap<String, String>()
+            var cpuHardware: String? = null
+            out.lineSequence().forEach { line ->
+                val trimmed = line.trim()
+                if (trimmed.lowercase().startsWith("hardware")) {
+                    val idx = trimmed.indexOf(':')
+                    if (idx > 0) {
+                        val h = trimmed.substring(idx + 1).trim()
+                        if (h.isNotEmpty() && !h.equals("unknown", ignoreCase = true)) {
+                            cpuHardware = h
+                        }
+                    }
+                } else {
+                    val idx = trimmed.indexOf('=')
+                    if (idx > 0) {
+                        val k = trimmed.substring(0, idx).trim()
+                        val v = trimmed.substring(idx + 1).trim()
+                        if (v.isNotEmpty() && !v.equals("unknown", ignoreCase = true)) {
+                            props[k] = v
+                        }
+                    }
+                }
+            }
+            for (k in listOf("ro.soc.model", "ro.vendor.qti.soc_name", "ro.hardware.chipname", "ro.mediatek.platform")) {
+                props[k]?.let { return it }
+            }
+            cpuHardware?.let { return it }
+            props["ro.board.platform"]?.let { return it }
+        } catch (_: Throwable) {
+        }
+
+        val hw = Build.HARDWARE?.trim().orEmpty()
+        val board = Build.BOARD?.trim().orEmpty()
+        return when {
+            hw.isNotEmpty() && !hw.equals("qcom", ignoreCase = true) -> hw
+            board.isNotEmpty() -> board
+            hw.isNotEmpty() -> hw
+            else -> "Unknown SoC"
+        }
+    }
+
+    private fun readTotalRamMb(shizuku: ShizukuClient): Double {
+        try {
+            val am = context.getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager
+            if (am != null) {
+                val info = ActivityManager.MemoryInfo()
+                am.getMemoryInfo(info)
+                if (info.totalMem > 0L) {
+                    return info.totalMem / (1024.0 * 1024.0)
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        try {
+            val out = shizuku.runShell("cat /proc/meminfo 2>/dev/null")
+            val match = Regex("MemTotal:\\s+(\\d+)\\s+kB").find(out)
+            if (match != null) {
+                val kb = match.groupValues[1].toDoubleOrNull()
+                if (kb != null && kb > 0) return kb / 1024.0
+            }
+        } catch (_: Throwable) {
+        }
+        return -1.0
     }
 
     // ------------------------------------------------------------------ installed apps
@@ -358,17 +504,27 @@ class SystemMetrics(private val context: Context) {
             ""
         }
 
-        val raw = HashMap<String, String>()
+        val raw = HashMap<String, MutableList<String>>()
         out.lineSequence().forEach { line ->
             val i = line.indexOf(':')
             if (i <= 0) return@forEach
             val tag = line.substring(0, i).trim()
             val value = line.substring(i + 1).trim()
-            if (value.isNotEmpty() && !raw.containsKey(tag)) raw[tag] = value
+            if (value.isNotEmpty()) raw.getOrPut(tag) { mutableListOf() }.add(value)
         }
 
-        fun ints(s: String?): List<Long> =
-            if (s == null) emptyList() else Regex("\\d+").findAll(s).map { it.value.toLong() }.toList()
+        val numRegex = Regex("-?\\d+(?:\\.\\d+)?")
+        val pctRegex = Regex("(-?\\d+(?:\\.\\d+)?)\\s*%")
+
+        fun doubles(s: String): List<Double> =
+            numRegex.findAll(s).mapNotNull { it.value.toDoubleOrNull() }.toList()
+
+        fun firstPercentValue(s: String): Double? {
+            val pctMatch = pctRegex.find(s)?.groupValues?.get(1)?.toDoubleOrNull()
+            if (pctMatch != null) return if (pctMatch in 0.0..100.0) pctMatch else null
+            val first = doubles(s).firstOrNull() ?: return null
+            return if (first in 0.0..100.0) first else null
+        }
 
         fun report(source: String, value: Double): Double {
             if (source != lastGpuSource) {
@@ -379,21 +535,64 @@ class SystemMetrics(private val context: Context) {
         }
 
         // 1) Real load figures, best source first
-        for (tag in listOf("kgsl_pct", "kgsl_load", "gpu_busy", "ged", "mali", "devfreq_load")) {
-            val first = ints(raw[tag]).firstOrNull() ?: continue
-            if (first in 0L..100L) return report(tag, first.toDouble())
+        for (tag in listOf("kgsl_pct", "kgsl_load", "gpu_busy", "ged", "mali", "drm_busy", "devfreq_load")) {
+            val values = raw[tag] ?: continue
+            for (v in values) {
+                val pct = firstPercentValue(v) ?: continue
+                return report(tag, pct)
+            }
         }
 
         // 2) Adreno busy/total counters
-        val busy = ints(raw["kgsl_busy"])
-        if (busy.size >= 2 && busy[1] > 0) {
-            return report("kgsl_busy", 100.0 * busy[0].toDouble() / busy[1].toDouble())
+        var hasZeroKgslBusy = false
+        for (v in raw["kgsl_busy"].orEmpty()) {
+            val busy = doubles(v)
+            if (busy.size >= 2) {
+                if (busy[1] > 0.0 && busy[0] >= 0.0) {
+                    return report("kgsl_busy", 100.0 * busy[0] / busy[1])
+                } else if (busy[0] == 0.0 && busy[1] == 0.0) {
+                    hasZeroKgslBusy = true
+                }
+            }
         }
 
-        // 3) Estimate from clock speed
-        val freq = ints(raw["freq"])
-        if (freq.size >= 2 && freq[1] > 0) {
-            return report("freq-estimate", 100.0 * freq[0].toDouble() / freq[1].toDouble())
+        // 3) Estimate from clock speed (cur_freq / max_freq)
+        for (v in raw["freq"].orEmpty()) {
+            val freq = doubles(v)
+            if (freq.size >= 2 && freq[0] >= 0.0 && freq[1] > 0.0) {
+                return report("freq-estimate", 100.0 * freq[0] / freq[1])
+            }
+        }
+
+        // 4) Estimate from cur_freq / max(available_frequencies)
+        for (v in raw["freq_avail"].orEmpty()) {
+            val freq = doubles(v)
+            if (freq.size >= 2 && freq[0] >= 0.0) {
+                val maxF = freq.drop(1).maxOrNull() ?: 0.0
+                if (maxF > 0.0) {
+                    return report("freq-avail-estimate", 100.0 * freq[0] / maxF)
+                }
+            }
+        }
+
+        // 5) MediaTek gpufreqv2 status/table estimate
+        for (v in raw["mtk_gpufreq"].orEmpty()) {
+            val sep = v.indexOf('|')
+            if (sep > 0) {
+                val statusPart = v.substring(0, sep)
+                val tablePart = v.substring(sep + 1)
+                val cur = Regex("cur_freq:\\s*(\\d+)").find(statusPart)?.groupValues?.get(1)?.toDoubleOrNull()
+                val maxF = Regex("freq:\\s*(\\d+)").findAll(tablePart)
+                    .mapNotNull { it.groupValues[1].toDoubleOrNull() }
+                    .maxOrNull()
+                if (cur != null && cur >= 0.0 && maxF != null && maxF > 0.0) {
+                    return report("mtk-gpufreqv2", 100.0 * cur / maxF)
+                }
+            }
+        }
+
+        if (hasZeroKgslBusy) {
+            return report("kgsl_busy-idle", 0.0)
         }
 
         if (!loggedGpuMiss) {
@@ -401,6 +600,73 @@ class SystemMetrics(private val context: Context) {
             Log.w(GPU_TAG, "No GPU usage source worked. output: ${out.take(300)}")
         }
         return -1.0
+    }
+
+    // ------------------------------------------------------------------ battery current / wattage
+
+    private fun readBatteryPower(shizuku: ShizukuClient): Pair<Double, Double> {
+        var voltageV = -1.0
+        try {
+            val intent = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            val vRaw = intent?.getIntExtra(BatteryManager.EXTRA_VOLTAGE, -1) ?: -1
+            voltageV = normalizeVolts(vRaw.toDouble())
+        } catch (_: Throwable) {
+        }
+
+        var currentMa = -1.0
+        try {
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as? BatteryManager
+            var raw = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW) ?: Int.MIN_VALUE
+            if (raw == Int.MIN_VALUE || raw == 0) {
+                val avg = bm?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_AVERAGE) ?: Int.MIN_VALUE
+                if (avg != Int.MIN_VALUE && avg != 0) raw = avg
+            }
+            if (raw != Int.MIN_VALUE && raw != 0) {
+                currentMa = normalizeMilliamps(raw.toLong())
+            }
+        } catch (_: Throwable) {
+        }
+
+        if (currentMa < 0 || voltageV < 0) {
+            try {
+                val out = shizuku.runShell(
+                    "c=\$(cat /sys/class/power_supply/battery/current_now 2>/dev/null); " +
+                        "[ -z \"\$c\" ] && c=\$(cat /sys/class/power_supply/bms/current_now 2>/dev/null); " +
+                        "v=\$(cat /sys/class/power_supply/battery/voltage_now 2>/dev/null); " +
+                        "[ -n \"\$c\" ] && echo \"c=\$c\"; [ -n \"\$v\" ] && echo \"v=\$v\"; true"
+                )
+                out.lineSequence().forEach { line ->
+                    if (line.startsWith("c=") && currentMa < 0) {
+                        val c = line.substring(2).trim().toLongOrNull()
+                        if (c != null && c != 0L) currentMa = normalizeMilliamps(c)
+                    } else if (line.startsWith("v=") && voltageV < 0) {
+                        val v = line.substring(2).trim().toDoubleOrNull()
+                        if (v != null && v > 0) voltageV = normalizeVolts(v)
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+        }
+
+        if (currentMa < 0.1 || currentMa > 30_000.0) currentMa = -1.0
+        val watts = if (currentMa >= 0 && voltageV >= 1.0 && voltageV <= 15.0) {
+            (currentMa / 1000.0) * voltageV
+        } else {
+            -1.0
+        }
+        return currentMa to watts
+    }
+
+    private fun normalizeMilliamps(raw: Long): Double {
+        val a = abs(raw)
+        return if (a >= 25_000L) a / 1000.0 else a.toDouble()
+    }
+
+    private fun normalizeVolts(raw: Double): Double = when {
+        raw <= 0.0 -> -1.0
+        raw > 100_000.0 -> raw / 1_000_000.0
+        raw > 100.0 -> raw / 1000.0
+        else -> raw
     }
 
     // ------------------------------------------------------------------ storage speed

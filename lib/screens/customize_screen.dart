@@ -122,6 +122,8 @@ class _CustomizeScreenState extends State<CustomizeScreen> {
                 (v) => _toggle(c.copyWith(showCpuUsage: v))),
             _switch('GPU usage', null, c.showGpuUsage,
                 (v) => _toggle(c.copyWith(showGpuUsage: v))),
+            _switch('Power draw', 'Battery current (mA) and wattage', c.showPower,
+                (v) => _toggle(c.copyWith(showPower: v))),
           ]),
           const SizedBox(height: 14),
           _section('Appearance', [
@@ -342,6 +344,7 @@ class _OverlayPreview extends StatelessWidget {
           if (temps.isNotEmpty) Text(temps, style: small(_text)),
           if (usage.isNotEmpty) Text(usage, style: small(const Color(0xFFC7CCD6))),
           if (cfg.showRam) Text('RAM 1843 MB free', style: small(const Color(0xFF9CA3AF))),
+          if (cfg.showPower) Text('840 mA  3.25 W', style: small(const Color(0xFFFBBF24))),
         ],
       ),
     );

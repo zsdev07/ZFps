@@ -1,4 +1,4 @@
-/// Frame-time statistics (1% low, 0.1% low, average frame time).
+/// Frame-time statistics (1% low, 0.1% low, average frame time, stability).
 ///
 /// Frame times are kept in a compact histogram (0.25 ms bins, 0-250 ms) so a
 /// whole session fits in ~1000 integers while the percentiles stay accurate.
@@ -7,6 +7,7 @@ class FrameStats {
 
   static const double binMs = 0.25;
   static const int binCount = 1000; // covers 0 - 250 ms; slower frames land in the last bin
+  static const double defaultStabilityToleranceMs = 3.0;
 
   static List<int> emptyHistogram() => List<int>.filled(binCount, 0);
 
@@ -35,6 +36,66 @@ class FrameStats {
       sum += hist[i] * (i + 0.5) * binMs;
     }
     return sum / total;
+  }
+
+  /// Median frame time (50th percentile) from the histogram, in ms.
+  static double? medianFrameMs(List<int> hist, {int minFrames = 10}) {
+    final total = totalFrames(hist);
+    if (total < minFrames) return null;
+    final target = (total + 1) ~/ 2;
+    var cum = 0;
+    for (var i = 0; i < hist.length; i++) {
+      cum += hist[i];
+      if (cum >= target) {
+        return (i + 0.5) * binMs;
+      }
+    }
+    return null;
+  }
+
+  /// Frame-Time Stability Score (%): percentage of frames within +/- [toleranceMs]
+  /// of the median (target) frame pacing.
+  static double? stabilityPercent(
+    List<int> hist, {
+    double toleranceMs = defaultStabilityToleranceMs,
+    int minFrames = 30,
+  }) {
+    final total = totalFrames(hist);
+    if (total < minFrames) return null;
+    final median = medianFrameMs(hist, minFrames: minFrames);
+    if (median == null) return null;
+    var stable = 0;
+    for (var i = 0; i < hist.length; i++) {
+      final c = hist[i];
+      if (c == 0) continue;
+      final ms = (i + 0.5) * binMs;
+      if ((ms - median).abs() <= toleranceMs) {
+        stable += c;
+      }
+    }
+    return 100.0 * stable / total;
+  }
+
+  /// Frame-Time Stability Score (%) for a raw window of frame times.
+  static double? stabilityOfList(
+    List<double> frameTimesMs, {
+    double toleranceMs = defaultStabilityToleranceMs,
+    int minFrames = 10,
+  }) {
+    final valid = frameTimesMs.where((ms) => ms > 0).toList();
+    final n = valid.length;
+    if (n < minFrames) return null;
+    valid.sort();
+    final median = n.isOdd
+        ? valid[n ~/ 2]
+        : (valid[n ~/ 2 - 1] + valid[n ~/ 2]) / 2.0;
+    var stable = 0;
+    for (final ms in valid) {
+      if ((ms - median).abs() <= toleranceMs) {
+        stable++;
+      }
+    }
+    return 100.0 * stable / n;
   }
 
   /// "X% low" = FPS equivalent of the average frame time of the slowest

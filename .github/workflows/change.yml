@@ -1,0 +1,51 @@
+name: Overwrite Files from Root ZIP
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_filename:
+        description: 'Name of the ZIP file in the repository root'
+        required: true
+        default: 'ZFps-changed-files.zip'
+        type: string
+      commit_message:
+        description: 'Commit message for the overwritten files'
+        required: false
+        default: 'chore: extract and overwrite files from ZFps-changed-files.zip'
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  extract-and-overwrite:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract ZIP and overwrite existing files
+        run: |
+          ZIP_FILE="${{ inputs.zip_filename }}"
+          
+          if [ ! -f "$ZIP_FILE" ]; then
+            echo "Error: $ZIP_FILE not found in repository root!"
+            exit 1
+          fi
+
+          unzip -o "$ZIP_FILE" -d .
+          rm -f "$ZIP_FILE"
+
+      - name: Compare, commit, and push changes
+        run: |
+          git status
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@://github.com"
+          git add -A
+          
+          if git diff --staged --quiet; then
+            echo "No differences found after extraction."
+          else
+            git commit -m "${{ inputs.commit_message }}"
+            git push
+          fi
